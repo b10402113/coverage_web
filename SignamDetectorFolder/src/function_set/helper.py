@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[3]:
+
 
 
 # %load helper.py
@@ -12,7 +12,9 @@ import numpy as np
 import pandas as pd
 import matplotlib.cm as cm
 
+
 #from keras.utils import to_categorical
+
 from sklearn.preprocessing import minmax_scale
 from sklearn.model_selection import train_test_split
 from matplotlib import pyplot as plt
@@ -25,7 +27,9 @@ from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 from sklearn.svm import SVR, SVC
 from functools import partial
 from sklearn.utils import shuffle
+
 from sklearn.externals import joblib 
+
 
 import torch
 import torchvision
@@ -40,8 +44,16 @@ device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
 device
 
 import json
-json_dir = "../results/json/"
-image_dir = "../results/image/"
+
+absFilePath = os.path.abspath(__file__)
+print('absFilePath'+absFilePath)
+fileDir = os.path.dirname(os.path.abspath(__file__))
+print('fileDir'+fileDir)
+parentDir = os.path.dirname(fileDir)
+parentDir = os.path.dirname(parentDir)
+print('parentDir'+parentDir)
+json_dir = parentDir+"/results/json/"
+image_dir = parentDir+"/results/image/"
 
 LL = ['LONGITUDE', 'LATITUDE']
 
@@ -61,6 +73,7 @@ def df_filter(df, model_info=None) :
 
 def get_hole(not_detected, WAP_number):
     hole = not_detected.groupby(LL).count().reset_index()[LL + ['WAP']]
+
     hole = hole[hole['WAP'] == WAP_number]
     
     hole = hole[LL].drop_duplicates()
@@ -83,6 +96,7 @@ def get_poll(detected) :
     poll = poll[LL+['COVERAGE', 'STATUS']].drop_duplicates()
     poll = poll.set_index(LL)
     return poll
+
 
 def get_train_val(model_info, df_agg_max_all_data, r=0) :
     if type(model_info) == int:
@@ -110,6 +124,7 @@ def get_train_val(model_info, df_agg_max_all_data, r=0) :
     
     df_max = get_strongest(df_detected_llw)
     
+
     curr_WAP_source = df_filter(df_max, model_info)['WAP'].unique()
     
     all_data = df_filter(df_agg_max, model_info)
@@ -121,6 +136,7 @@ def get_train_val(model_info, df_agg_max_all_data, r=0) :
     coverage = get_poll(detected)
 
     not_detected = df_filter(df_not_detected_llw, model_info)
+
     not_detected = not_detected[(not_detected.WAP.isin(curr_WAP_source))]
     hole = get_hole(not_detected, len(curr_WAP_source))
     coverage = coverage.append(hole)
@@ -140,6 +156,7 @@ def get_train_val(model_info, df_agg_max_all_data, r=0) :
         coverage = coverage[coverage['STATUS'] != 2]
     else:
         pollute_happened = True
+
         
     train_locs, val_locs = train_test_split(coverage, train_size=0.8, stratify=coverage.STATUS)
     
@@ -148,6 +165,7 @@ def get_train_val(model_info, df_agg_max_all_data, r=0) :
     json_data = {'train locs': len(train_locs),
                  'val locs': len(val_locs)} 
     json_data = json.dumps(json_data)
+    
     with open(json_dir+'train_val_locs.json', 'w') as fp:
         fp.write(json_data)
         
@@ -283,7 +301,7 @@ def other_result(name, f_regressor,
                  df_train, df_val, 
                  df_train_per_locs, df_val_per_locs, pollution_flag, model_info) :
     
-    dir = "..\\results\\model"
+    dir = parentDir+"\\results\\model"
     #LLW
     x_train = df_train[LL+['WAP']].values
     x_val = df_val[LL+['WAP']].values
@@ -321,6 +339,7 @@ def other_result(name, f_regressor,
     y_val = df_val_per_locs['COVERAGE']
     
     f_clf_coverage_2.fit(x_train, y_train)
+
     if type(model_info) == int:
         joblib.dump(f_clf_coverage_2, os.path.join(dir, name+"_set" + str(model_info) +                                              "_clf_coverage_2_model.pth")) ###
     elif type(model_info) == tuple:
@@ -349,6 +368,7 @@ def other_result(name, f_regressor,
     # hole LL
     y_train = df_train_per_locs['STATUS'] == 0
     y_val = df_val_per_locs['STATUS'] == 0
+
     f_clf_hole.fit(x_train, y_train)
     if type(model_info) == int:
         joblib.dump(f_clf_hole, os.path.join(dir, name+"_set" + str(model_info) +                                              "_clf_hole_model.pth")) ###
@@ -356,7 +376,7 @@ def other_result(name, f_regressor,
         joblib.dump(f_clf_hole, os.path.join(dir, name+"_b" + str(model_info[0]) +                                              'f'+str(model_info[1])+"_clf_hole_model.pth")) ###
     elif type(model_info) == None:
         joblib.dump(f_clf_hole, os.path.join(dir, name+"_outdoor_clf_hole_model.pth")) ###
-    
+
     y_pred_hole = f_clf_hole.predict(x_val)
     h_acc = np.mean(y_pred_hole == y_val)
     
@@ -476,7 +496,6 @@ def plot_bool(i, x, y, values, preds, title) :
     plt.xticks(fontsize=20)
     plt.yticks(fontsize=20)
     plt.title(title, fontsize=20)
-
 
 
 

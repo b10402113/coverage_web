@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[2]:
+
 
 
 # %load model.py
@@ -13,7 +13,9 @@ import pandas as pd
 import matplotlib.cm as cm
 import json
 
+
 #from keras.utils import to_categorical
+
 from sklearn.preprocessing import minmax_scale
 from sklearn.model_selection import train_test_split
 from matplotlib import pyplot as plt
@@ -40,10 +42,19 @@ from torchvision import transforms
 device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
 device
 
+
 batch_size = 256
+absFilePath = os.path.abspath(__file__)
+# print('absFilePath'+absFilePath)
+fileDir = os.path.dirname(os.path.abspath(__file__))
+# print('fileDir'+fileDir)
+parentDir = os.path.dirname(fileDir)
+parentDir = os.path.dirname(parentDir)
+
 LL = ['LONGITUDE', 'LATITUDE']
-image_dir = '../results/image/'
-json_dir = '../results/json/'
+image_dir = parentDir+'/results/image/'
+json_dir = parentDir+'/results/json/'
+
 
 class Dataset(Dataset):
     def __init__(self, df, train):
@@ -107,6 +118,7 @@ class autoencoder(nn.Module):
             nn.ReLU(True),
             nn.Linear(32, 3))'''
 
+
     def forward(self, x1, x2=None, predict=False):
         out1 = self.encoder(x1)
         
@@ -134,6 +146,7 @@ def get_model(num_epochs=150, lr=1e-1, weight_decay=1e-5, lr_decay=1e-1, lr_deca
                                  lr_decay=lr_decay, lr_decay_epoch=lr_decay_epoch)
     return model, criterion, optimizer
 
+
 def train(model, criterion, optimizer, train_dataloader, num_epochs=150, show=False, model_info = None):
     losses = []
     min_loss = 1
@@ -152,13 +165,13 @@ def train(model, criterion, optimizer, train_dataloader, num_epochs=150, show=Fa
             optimizer.step()
         # ===================log========================
         losses.append(loss.item())
-        
         if losses[-1] < min_loss :
             min_loss = losses[-1]
             best_model = copy.deepcopy(model) 
 
     best_model = best_model.eval()
     
+
     if show:
         if type(model_info) == int :
             #print("Set", s, 'model loss start {:.4f} best {:.4f}'.format(losses[0], min_loss))
