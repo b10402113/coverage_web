@@ -376,7 +376,7 @@ def main():
     #     MySD.train_AE()
     # except Exception:
     #     MySD.train_AE()
-    print("start")
+    print("starts")
     #MySD.train_KNN()
     #MySD.train_SVM()
     #MySD.train_DT()
