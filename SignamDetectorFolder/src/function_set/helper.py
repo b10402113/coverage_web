@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[2]:
+
 
 
 # %load helper.py
@@ -11,9 +11,10 @@ import copy
 import numpy as np
 import pandas as pd
 import matplotlib.cm as cm
-from sklearn.externals import joblib 
 
-from keras.utils import to_categorical
+
+#from keras.utils import to_categorical
+
 from sklearn.preprocessing import minmax_scale
 from sklearn.model_selection import train_test_split
 from matplotlib import pyplot as plt
@@ -26,6 +27,9 @@ from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 from sklearn.svm import SVR, SVC
 from functools import partial
 from sklearn.utils import shuffle
+
+from sklearn.externals import joblib 
+
 
 import torch
 import torchvision
@@ -40,6 +44,7 @@ device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
 device
 
 import json
+
 absFilePath = os.path.abspath(__file__)
 print('absFilePath'+absFilePath)
 fileDir = os.path.dirname(os.path.abspath(__file__))
@@ -50,19 +55,25 @@ print('parentDir'+parentDir)
 json_dir = parentDir+"/results/json/"
 image_dir = parentDir+"/results/image/"
 
-
 LL = ['LONGITUDE', 'LATITUDE']
-LLS = LL + ['SET']
-LLW = LL + ['WAP']
-LLSW = LLW + ['SET']
 
-def df_filter(df, s) :
-    filtered_df = df.loc[df['SET']==s, :].copy()
-    filtered_df.drop(['SET'],axis=1, inplace=True)
-    return filtered_df
+def df_filter(df, model_info=None) :
+    if type(model_info) == tuple:
+        filtered_df = df[(df['BUILDINGID']==model_info[0]) & (df['FLOOR']==model_info[1])].copy()
+        filtered_df.drop(['BUILDINGID', 'FLOOR'],axis=1, inplace=True)
+        return filtered_df
+    elif type(model_info) == int:
+        filtered_df = df[df['SET']==model_info].copy()
+        filtered_df.drop(['SET'],axis=1, inplace=True)
+        return filtered_df
+    else:
+        return df
+    
+    
 
 def get_hole(not_detected, WAP_number):
-    hole = not_detected.groupby(LL).count().reset_index()[LLW]
+    hole = not_detected.groupby(LL).count().reset_index()[LL + ['WAP']]
+
     hole = hole[hole['WAP'] == WAP_number]
     
     hole = hole[LL].drop_duplicates()
@@ -78,21 +89,30 @@ def get_poll(detected) :
     poll = poll.rename({'WAP_count':'COVERAGE'}, axis=1)
     poll['STATUS'] = 1
     
-    threshold_poll = np.percentile(poll.SIGNAL_mean, 75) #origin is 75
-    poll['POLLUTION'] = poll.COVERAGE > 1# & (poll.SIGNAL_mean > threshold_poll)
+    threshold_poll = np.percentile(poll.SIGNAL_mean, 75)
+    poll['POLLUTION'] = (poll.COVERAGE > 1) #& (poll.SIGNAL_mean > threshold_poll)#####
     poll.loc[poll.POLLUTION, 'STATUS'] = 2
     
     poll = poll[LL+['COVERAGE', 'STATUS']].drop_duplicates()
     poll = poll.set_index(LL)
     return poll
 
-def get_train_val(s, df_agg_max_all_set, r=0) :
-    df_agg_max = df_agg_max_all_set.loc[df_agg_max_all_set['SET']==s, :].copy()
+
+def get_train_val(model_info, df_agg_max_all_data, r=0) :
+    if type(model_info) == int:
+        df_agg_max = df_agg_max_all_data.loc[df_agg_max_all_data['SET']==model_info, :].copy()
+        filter_ = LL+['SET', 'WAP']
+    elif type(model_info) == tuple:
+        df_agg_max = df_agg_max_all_data
+        filter_ = LL+['BUILDINGID', 'FLOOR', 'WAP']
+    else:
+        df_agg_max = df_agg_max_all_data
+        filter_ = LL+['WAP']
     detected_filter = df_agg_max['MIN_SIGNAL']>-1
     # llw stands for longitude, Latitude, WAP
     # means the locations are always covered by current WAP 
     df_detected_llw = df_agg_max[detected_filter].drop('MIN_SIGNAL', axis=1)
-    df_detected_llw = merge_agg(df_detected_llw, LLSW, 'SIGNAL', ['mean'])
+    df_detected_llw = merge_agg(df_detected_llw, filter_, 'SIGNAL', ['mean'])
     df_detected_llw = df_detected_llw.drop('SIGNAL', axis=1).rename(columns={'mean' : 'SIGNAL'})
     df_detected_llw = df_detected_llw.drop_duplicates().reset_index(drop=True)
     
@@ -104,17 +124,19 @@ def get_train_val(s, df_agg_max_all_set, r=0) :
     
     df_max = get_strongest(df_detected_llw)
     
-    curr_WAP_source = df_filter(df_max, s)['WAP'].unique()
+
+    curr_WAP_source = df_filter(df_max, model_info)['WAP'].unique()
     
-    all_data = df_filter(df_agg_max, s)
+    all_data = df_filter(df_agg_max, model_info)
     all_data = all_data[all_data.WAP.isin(curr_WAP_source)]
     all_data = all_data.reset_index(drop=True)
 
-    detected = df_filter(df_detected_llw, s)
+    detected = df_filter(df_detected_llw, model_info)
     detected = detected[(detected.WAP.isin(curr_WAP_source))]
     coverage = get_poll(detected)
 
-    not_detected = df_filter(df_not_detected_llw, s)
+    not_detected = df_filter(df_not_detected_llw, model_info)
+
     not_detected = not_detected[(not_detected.WAP.isin(curr_WAP_source))]
     hole = get_hole(not_detected, len(curr_WAP_source))
     coverage = coverage.append(hole)
@@ -134,14 +156,16 @@ def get_train_val(s, df_agg_max_all_set, r=0) :
         coverage = coverage[coverage['STATUS'] != 2]
     else:
         pollute_happened = True
-    
-    train_locs, val_locs = train_test_split(coverage, stratify=coverage.STATUS)
+
+        
+    train_locs, val_locs = train_test_split(coverage, train_size=0.8, stratify=coverage.STATUS)
     
     #print('train locs', len(train_locs), 'val locs', len(val_locs))
     #####-----PRINT JSON-----#####
-    json_data = {'train_locs': len(train_locs),
-                 'val_locs': len(val_locs)} 
+    json_data = {'train locs': len(train_locs),
+                 'val locs': len(val_locs)} 
     json_data = json.dumps(json_data)
+    
     with open(json_dir+'train_val_locs.json', 'w') as fp:
         fp.write(json_data)
         
@@ -208,7 +232,7 @@ def restructure(df) :
     df_final = pd.DataFrame()
     for i in range(1,521) :
         AP = 'WAP%03d' % i
-        df_temp = df[[AP]+LLBF]
+        df_temp = df[[AP]+LL+['BUILDINGID'+'FLOOR']]
         df_temp = df_temp.rename(columns={AP : 'SIGNAL'})
         df_temp['WAP'] = i
         
@@ -218,7 +242,7 @@ def restructure(df) :
 
 def get_strongest(df) :
     df_max = pd.DataFrame()
-    for WAP in range(37, 43) :
+    for WAP in range(1,521) :
         df_temp = df[df['WAP'] == WAP].reset_index(drop=True)
         max_val = df_temp['SIGNAL'].max()
         
@@ -253,9 +277,7 @@ def plot_data(train, val):
     fig = plt.figure(figsize=(25,5))
     plot_label(1, train.LONGITUDE, train.LATITUDE, train.STATUS, 'Train Data')
     plot_label(2, val.LONGITUDE, val.LATITUDE, val.STATUS, 'Val Data')
-    plt.savefig(image_dir+'train_val.png')
-    plt.close()
-    #plt.show()
+    plt.show()
 
 def plot_label(i, x, y, status, title) :
     positive = (status == 2) 
@@ -277,7 +299,8 @@ def other_result(name, f_regressor,
                  f_clf_coverage_2, 
                  f_clf_poll, f_clf_hole,  
                  df_train, df_val, 
-                 df_train_per_locs, df_val_per_locs, pollution_flag, s) :
+                 df_train_per_locs, df_val_per_locs, pollution_flag, model_info) :
+    
     dir = parentDir+"\\results\\model"
     #LLW
     x_train = df_train[LL+['WAP']].values
@@ -285,15 +308,25 @@ def other_result(name, f_regressor,
 
     #signal LLW
     f_regressor.fit(x_train, df_train['SIGNAL'])
-    joblib.dump(f_regressor, os.path.join(dir, name+"_set" + str(s) + "_regressor_model.pth")) ###
-    y_pred_signal = f_regressor.predict(x_val)    
+    if type(model_info) == int:
+        joblib.dump(f_regressor, os.path.join(dir, name+"_set" + str(model_info) +                                              "_regressor_model.pth")) ###
+    elif type(model_info) == tuple:
+        joblib.dump(f_regressor, os.path.join(dir, name+"_b" + str(model_info[0]) +                                              'f'+str(model_info[1])+"_regressor_model.pth")) ###
+    elif type(model_info) == None:
+        joblib.dump(f_regressor, os.path.join(dir, name+"_outdoor_regressor_model.pth")) ###
+    y_pred_signal = f_regressor.predict(x_val)
     mse = mean_squared_error(df_val['SIGNAL'], y_pred_signal)
 
     #coverage LLW
     y_train = df_train['SIGNAL'] == -1
     y_val = df_val['SIGNAL'] == -1
     f_clf_coverage.fit(x_train, y_train)
-    joblib.dump(f_clf_coverage, os.path.join(dir, name+"_set" + str(s) + "_clf_coverage_model.pth")) ###
+    if type(model_info) == int:
+        joblib.dump(f_clf_coverage, os.path.join(dir, name+"_set" + str(model_info) +                                              "_clf_coverage_model.pth")) ###
+    elif type(model_info) == tuple:
+        joblib.dump(f_clf_coverage, os.path.join(dir, name+"_b" + str(model_info[0]) +                                              'f'+str(model_info[1])+"_clf_coverage_model.pth")) ###
+    elif type(model_info) == None:
+        joblib.dump(f_rclf_coverage, os.path.join(dir, name+"_outdoor_clf_coverage_model.pth")) ###
     y_pred_coverage = f_clf_coverage.predict(x_val)
     c_acc = np.mean(y_val == y_pred_coverage)
 
@@ -306,26 +339,44 @@ def other_result(name, f_regressor,
     y_val = df_val_per_locs['COVERAGE']
     
     f_clf_coverage_2.fit(x_train, y_train)
-    joblib.dump(f_clf_coverage_2, os.path.join(dir, name+"_set" + str(s) + "_clf_coverage2_model.pth")) ###
+
+    if type(model_info) == int:
+        joblib.dump(f_clf_coverage_2, os.path.join(dir, name+"_set" + str(model_info) +                                              "_clf_coverage_2_model.pth")) ###
+    elif type(model_info) == tuple:
+        joblib.dump(f_clf_coverage_2, os.path.join(dir, name+"_b" + str(model_info[0]) +                                              'f'+str(model_info[1])+"_clf_coverage_2_model.pth")) ###
+    elif type(model_info) == None:
+        joblib.dump(f_rclf_coverage2, os.path.join(dir, name+"_outdoor_clf_coverage_2_model.pth")) ###
     y_pred_coverage_ll = f_clf_coverage_2.predict(x_val)
     c_mse = mean_squared_error(y_val, y_pred_coverage_ll)
     
-    # pollution LL  
+    # pollution LL 
     if pollution_flag:
         y_train = df_train_per_locs['STATUS'] == 2
         y_val = df_val_per_locs['STATUS'] == 2
-    
+
         f_clf_poll.fit(x_train, y_train)
-        joblib.dump(f_clf_poll, os.path.join(dir, name+"_set" + str(s) + "_clf_pollution.pth")) ###
+        if type(model_info) == int:
+            joblib.dump(f_clf_poll, os.path.join(dir, name+"_set" + str(model_info) +                                                  "_clf_poll_model.pth")) ###
+        elif type(model_info) == tuple:
+            joblib.dump(f_clf_poll, os.path.join(dir, name+"_b" + str(model_info[0]) +                                                  'f'+str(model_info[1])+"_clf_poll_model.pth")) ###
+        elif type(model_info) == None:
+            joblib.dump(f_clf_poll, os.path.join(dir, name+"_outdoor_clf_poll_model.pth")) ###
+
         y_pred_poll = f_clf_poll.predict(x_val)
         p_acc = np.mean(y_pred_poll == y_val)
 
     # hole LL
     y_train = df_train_per_locs['STATUS'] == 0
     y_val = df_val_per_locs['STATUS'] == 0
-    
+
     f_clf_hole.fit(x_train, y_train)
-    joblib.dump(f_clf_hole, os.path.join(dir, name+"_set" + str(s) + "_clf_hole.pth")) ###
+    if type(model_info) == int:
+        joblib.dump(f_clf_hole, os.path.join(dir, name+"_set" + str(model_info) +                                              "_clf_hole_model.pth")) ###
+    elif type(model_info) == tuple:
+        joblib.dump(f_clf_hole, os.path.join(dir, name+"_b" + str(model_info[0]) +                                              'f'+str(model_info[1])+"_clf_hole_model.pth")) ###
+    elif type(model_info) == None:
+        joblib.dump(f_clf_hole, os.path.join(dir, name+"_outdoor_clf_hole_model.pth")) ###
+
     y_pred_hole = f_clf_hole.predict(x_val)
     h_acc = np.mean(y_pred_hole == y_val)
     
@@ -355,7 +406,6 @@ def other_result(name, f_regressor,
         with open(json_dir+name+'.json', 'w') as f:
             f.write(json_data)
         return y_pred_signal, y_pred_coverage, y_pred_coverage_ll, y_pred_hole
-    
 
 def plot_encoder(i, preds, plot_type) :
     _, df_ll = preds
@@ -367,24 +417,21 @@ def plot_encoder(i, preds, plot_type) :
         diff = df_ll['COVERAGE'] - df_ll['pred_COVERAGE']
         c_mse = mean_squared_error(df_ll['COVERAGE'], df_ll['pred_COVERAGE'])
         plot(i, x, y, diff, 'encoder diff coverage')
-        #print('encoder mse', c_mse)
-        #####-----PRINT JSON-----#####
+        print('encoder mse', c_mse)
     
     #Pollution LL
     elif plot_type is 'polluted' :
         diff = (df_ll['STATUS']==2).astype(int) - df_ll['pred_POLLUTED'].astype(int)
         p_acc = np.mean(((df_ll['STATUS']==2) == df_ll['pred_POLLUTED']))
         plot_bool(i, x, y, (df_ll['STATUS']==2).astype(int), df_ll['pred_POLLUTED'].astype(int), 'encoder polluted')
-        #print('encoder acc', p_acc)
-        #####-----PRINT JSON-----#####
+        print('encoder acc', p_acc)
     
     #Hole LL
     elif plot_type is 'hole' :
         diff = (df_ll['STATUS']==0).astype(int) - df_ll['pred_HOLE'].astype(int)
         h_acc = np.mean(((df_ll['STATUS']==0) == df_ll['pred_HOLE']))
         plot_bool(i, x, y, (df_ll['STATUS']==0).astype(int), df_ll['pred_HOLE'].astype(int), 'encoder hole')
-        #print('encoder acc', h_acc)
-        #####-----PRINT JSON-----#####
+        print('encoder acc', h_acc)
         
     else :
         print(plot_type, ' is not supported')
@@ -425,7 +472,7 @@ def plot_other(i, df_val_per_locs, preds, name, pollution_flag, plot_type) :
 def plot(i, x, y, values, title) :
     cm = plt.cm.get_cmap('RdYlGn_r')
     cm = plt.cm.get_cmap('jet')
-    plt.subplot(2, 2, i)
+    plt.subplot(3, 2, i) ####
     sc = plt.scatter(x, y, c=values, s=50, cmap=cm)
     sc = plt.colorbar(sc)
     sc.ax.tick_params(labelsize=20)
@@ -439,7 +486,7 @@ def plot_bool(i, x, y, values, preds, title) :
     true_negative = (values == 0) & (preds == 0)
     false_negative = (values == 1) & (preds == 0)
     
-    plt.subplot(2, 2, i)
+    plt.subplot(3, 2, i)
     plt.scatter(x[true_positive], y[true_positive], c='salmon', s=50, label='true positive')
     plt.scatter(x[false_positive], y[false_positive], c='r', s=50, label='false positive')
     plt.scatter(x[true_negative], y[true_negative], c='c', s=50, label='true negative')
@@ -449,6 +496,7 @@ def plot_bool(i, x, y, values, preds, title) :
     plt.xticks(fontsize=20)
     plt.yticks(fontsize=20)
     plt.title(title, fontsize=20)
+
 
 
 # In[ ]:

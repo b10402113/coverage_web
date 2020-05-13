@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
+
 
 
 # %load model.py
@@ -13,7 +13,9 @@ import pandas as pd
 import matplotlib.cm as cm
 import json
 
-from keras.utils import to_categorical
+
+#from keras.utils import to_categorical
+
 from sklearn.preprocessing import minmax_scale
 from sklearn.model_selection import train_test_split
 from matplotlib import pyplot as plt
@@ -40,6 +42,8 @@ from torchvision import transforms
 device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
 device
 
+
+batch_size = 256
 absFilePath = os.path.abspath(__file__)
 # print('absFilePath'+absFilePath)
 fileDir = os.path.dirname(os.path.abspath(__file__))
@@ -47,10 +51,10 @@ fileDir = os.path.dirname(os.path.abspath(__file__))
 parentDir = os.path.dirname(fileDir)
 parentDir = os.path.dirname(parentDir)
 
-batch_size = 64
 LL = ['LONGITUDE', 'LATITUDE']
 image_dir = parentDir+'/results/image/'
 json_dir = parentDir+'/results/json/'
+
 
 class Dataset(Dataset):
     def __init__(self, df, train):
@@ -83,15 +87,37 @@ class autoencoder(nn.Module):
     def __init__(self):
         super(autoencoder, self).__init__()
         self.encoder = nn.Sequential(
-            nn.Linear(2, 32),
-            nn.Dropout(0.2),
-#             nn.Linear(32, 32),
-#             nn.ReLU(),
-            nn.Linear(32, 32),
-            nn.ReLU(),
-            nn.Linear(32, 32),
-            nn.ReLU(),
+            nn.Linear(2, 256),
+            nn.Dropout(0.2),  #0.2
+            
+            nn.Linear(256, 128),####
+            nn.ReLU(True),
+            nn.Linear(128, 64),####
+            nn.ReLU(True),
+            nn.Linear(64, 32),####
+            nn.ReLU(True),
             nn.Linear(32, 3))
+        
+        '''self.encoder = nn.Sequential(
+            nn.Linear(2, 128),
+            nn.Dropout(0.2),  #0.2
+            
+            nn.Linear(128, 64),####
+            nn.ReLU(True),
+            nn.Linear(64, 32),####
+            nn.ReLU(True),
+            nn.Linear(32, 3))'''
+        
+        '''self.encoder = nn.Sequential(
+            nn.Linear(2, 32),
+            nn.Dropout(0.2),  #0.2
+            
+            nn.Linear(32, 64),####
+            nn.ReLU(True),
+            nn.Linear(64, 32),####
+            nn.ReLU(True),
+            nn.Linear(32, 3))'''
+
 
     def forward(self, x1, x2=None, predict=False):
         out1 = self.encoder(x1)
@@ -120,7 +146,8 @@ def get_model(num_epochs=150, lr=1e-1, weight_decay=1e-5, lr_decay=1e-1, lr_deca
                                  lr_decay=lr_decay, lr_decay_epoch=lr_decay_epoch)
     return model, criterion, optimizer
 
-def train(model, criterion, optimizer, train_dataloader, num_epochs=150, show=False, s = 33):
+
+def train(model, criterion, optimizer, train_dataloader, num_epochs=150, show=False, model_info = None):
     losses = []
     min_loss = 1
     best_model = model
@@ -138,19 +165,28 @@ def train(model, criterion, optimizer, train_dataloader, num_epochs=150, show=Fa
             optimizer.step()
         # ===================log========================
         losses.append(loss.item())
-
         if losses[-1] < min_loss :
             min_loss = losses[-1]
             best_model = copy.deepcopy(model) 
 
     best_model = best_model.eval()
     
-    if show :
-        print("set", s, 'model loss start {:.4f} best {:.4f}'.format(losses[0], min_loss))
-        json_data = {"set": s, 'model_loss_start':losses[0], 'best': min_loss}
-        json_data = json.dumps(json_data)
-        with open(json_dir+'training_info.json', 'w') as f:
-            f.write(json_data)
+
+    if show:
+        if type(model_info) == int :
+            #print("Set", s, 'model loss start {:.4f} best {:.4f}'.format(losses[0], min_loss))
+            #####-----PRINT JSON-----#####
+            json_data = {"Set": model_info, 'model loss start':losses[0], 'best': min_loss}
+            json_data = json.dumps(json_data)
+            with open(json_dir+'training_info.json', 'w') as f:
+                f.write(json_data)
+                
+        elif type(model_info) == tuple :
+            json_data = {"B": model_info[0], "F":model_info[1], 'model loss start':losses[0], 'best': min_loss}
+            json_data = json.dumps(json_data)
+            with open(json_dir+'training_info.json', 'w') as f:
+                f.write(json_data)
+        
         
         plt.figure(figsize=(10, 5))
         plt.plot(losses)
